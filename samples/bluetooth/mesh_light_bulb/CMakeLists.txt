@@ -10,7 +10,10 @@ cmake_minimum_required(VERSION 3.20.0)
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(mesh_light_bulb)
 
+zephyr_include_directories(../common)
+
 target_sources(app PRIVATE
     src/main.c
     src/mesh_node.c
+    ../common/address_verification.c
 )

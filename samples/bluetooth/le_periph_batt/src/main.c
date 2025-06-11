@@ -370,13 +370,8 @@ void on_gapm_process_complete(uint32_t metainfo, uint16_t status)
 		LOG_ERR("gapm process completed with error %u", status);
 		return;
 	}
-	gap_bdaddr_t identity;
 
-	gapm_get_identity(&identity);
-
-	LOG_INF("Device identity: %02X:%02X:%02X:%02X:%02X:%02X",
-		identity.addr[5], identity.addr[4],
-		identity.addr[3], identity.addr[2], identity.addr[1], identity.addr[0]);
+	print_device_identity();
 
 	LOG_DBG("gapm process completed successfully");
 

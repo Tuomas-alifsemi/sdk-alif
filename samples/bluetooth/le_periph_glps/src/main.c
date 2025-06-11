@@ -23,6 +23,7 @@
 #include "gapm_le.h"
 #include "gapm_le_adv.h"
 #include "co_buf.h"
+#include "address_verification.h"
 
 /*  Profile definitions */
 #include "prf.h"
@@ -34,11 +35,12 @@
 #include "batt_svc.h"
 #include "shared_control.h"
 
-struct shared_control ctrl = { false, 0, 0 };
+struct shared_control ctrl = {false, 0, 0};
 
 /* Short interval for demonstration purposes */
-#define TX_INTERVAL	2000 /* in milliseconds */
-#define GLPS_STORE_MAX	0xFFFF
+#define TX_INTERVAL      2000 /* in milliseconds */
+#define GLPS_STORE_MAX   0xFFFF
+#define SAMPLE_ADDR_TYPE ALIF_STATIC_RAND_ADDR /* Static random address */
 
 /* Variable to check if peer device is ready to receive data"*/
 static bool READY_TO_SEND;
@@ -46,6 +48,7 @@ static bool READY_TO_SEND;
 static uint16_t seq_num;
 static uint16_t store_idx;
 static prf_sfloat meas_value;
+static uint8_t adv_type;
 
 /* Global index to cycle through the values */
 static int current_index;
@@ -57,13 +60,14 @@ LOG_MODULE_REGISTER(main, LOG_LEVEL_DBG);
 /**
  * Bluetooth stack configuration
  */
-static const gapm_config_t gapm_cfg = {
+static gapm_config_t gapm_cfg = {
 	.role = GAP_ROLE_LE_PERIPHERAL,
 	.pairing_mode = GAPM_PAIRING_MODE_ALL,
 	.privacy_cfg = 0,
 	.renew_dur = 1500,
-	.private_identity.addr = {0xCD, 0xFE, 0xFB, 0xDE, 0x11, 0x07},
-	.irk.key = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+	.private_identity.addr = {0},
+	.irk.key = {0x12, 0xCE, 0xD2, 0x2F, 0x32, 0x5A, 0x61, 0x2A, 0x7E, 0x1A, 0x1B, 0x3B, 0x2A,
+		    0x8D, 0xA1, 0xA4},
 	.gap_start_hdl = 0,
 	.gatt_start_hdl = 0,
 	.att_cfg = 0,
@@ -221,9 +225,8 @@ static void on_meas_send_complete(uint8_t conidx, uint16_t status)
 		glps_racp_rsp_send(conidx, glps_temp.op_code, GLP_RSP_SUCCESS, 1);
 		send_idx = 1;
 	} else {
-		err = glps_meas_send(glps_temp.conidx,
-				ext_meas[send_idx].ext_seq_num,
-				&ext_meas[send_idx].p_meas, NULL);
+		err = glps_meas_send(glps_temp.conidx, ext_meas[send_idx].ext_seq_num,
+				     &ext_meas[send_idx].p_meas, NULL);
 		if (err) {
 			LOG_ERR("Error %u sending measurement", err);
 		}
@@ -231,7 +234,6 @@ static void on_meas_send_complete(uint8_t conidx, uint16_t status)
 		nb_stored--;
 	}
 }
-
 
 static void process_racp_req(uint8_t conidx, uint8_t op_code)
 {
@@ -242,8 +244,8 @@ static void process_racp_req(uint8_t conidx, uint8_t op_code)
 
 	if (READY_TO_SEND && available_data) {
 		available_data = false;
-		err = glps_meas_send(glps_temp.conidx, ext_meas[0].ext_seq_num,
-				&ext_meas[0].p_meas, NULL);
+		err = glps_meas_send(glps_temp.conidx, ext_meas[0].ext_seq_num, &ext_meas[0].p_meas,
+				     NULL);
 		if (err) {
 			LOG_ERR("Error %u sending measurement", err);
 		}
@@ -292,12 +294,12 @@ static void on_pairing_req(uint8_t conidx, uint32_t metainfo, uint8_t auth_level
 
 static void on_pairing_failed(uint8_t conidx, uint32_t metainfo, uint16_t reason)
 {
-	LOG_DBG("Pairing failed conidx: %u, metainfo: %u, reason: 0x%02x\n",
-		conidx, metainfo, reason);
+	LOG_DBG("Pairing failed conidx: %u, metainfo: %u, reason: 0x%02x\n", conidx, metainfo,
+		reason);
 }
 
 static void on_le_encrypt_req(uint8_t conidx, uint32_t metainfo, uint16_t ediv,
-	const gap_le_random_nb_t *p_rand)
+			      const gap_le_random_nb_t *p_rand)
 {
 }
 
@@ -305,15 +307,13 @@ static void on_auth_req(uint8_t conidx, uint32_t metainfo, uint8_t auth_level)
 {
 }
 
-static void on_auth_info(uint8_t conidx, uint32_t metainfo, uint8_t sec_lvl,
-				bool encrypted,
-				uint8_t key_size)
+static void on_auth_info(uint8_t conidx, uint32_t metainfo, uint8_t sec_lvl, bool encrypted,
+			 uint8_t key_size)
 {
 }
 
 static void on_pairing_succeed(uint8_t conidx, uint32_t metainfo, uint8_t pairing_level,
-				bool enc_key_present,
-				uint8_t key_type)
+			       bool enc_key_present, uint8_t key_type)
 {
 	LOG_INF("Pairing succeeded");
 }
@@ -479,6 +479,8 @@ static void on_adv_actv_stopped(uint32_t metainfo, uint8_t actv_idx, uint16_t re
 static void on_adv_actv_proc_cmp(uint32_t metainfo, uint8_t proc_id, uint8_t actv_idx,
 				 uint16_t status)
 {
+	gap_addr_t *p_addr;
+
 	if (status) {
 		LOG_ERR("Advertising activity process completed with error %u", status);
 		return;
@@ -502,7 +504,11 @@ static void on_adv_actv_proc_cmp(uint32_t metainfo, uint8_t proc_id, uint8_t act
 		break;
 
 	case GAPM_ACTV_START:
-		LOG_DBG("Advertising was started");
+		p_addr = gapm_le_get_adv_addr(actv_idx);
+		LOG_INF("Advertising has been started, address: %02X:%02X:%02X:%02X:%02X:%02X",
+			p_addr->addr[5], p_addr->addr[4], p_addr->addr[3], p_addr->addr[2],
+			p_addr->addr[1], p_addr->addr[0]);
+		k_sem_give(&init_sem);
 		break;
 
 	default:
@@ -530,9 +536,9 @@ static uint16_t create_advertising(void)
 		.prop = GAPM_ADV_PROP_UNDIR_CONN_MASK,
 		.disc_mode = GAPM_ADV_MODE_GEN_DISC,
 #if !CONFIG_ALIF_BLE_ROM_IMAGE_V1_0 /* ROM version > 1.0 */
-				.tx_pwr = 0,
+		.tx_pwr = 0,
 #else
-				.max_tx_pwr = 0,
+		.max_tx_pwr = 0,
 #endif /* !CONFIG_ALIF_BLE_ROM_IMAGE_V1_0 */
 		.filter_pol = GAPM_ADV_ALLOW_SCAN_ANY_CON_ANY,
 		.prim_cfg = {
@@ -543,7 +549,7 @@ static uint16_t create_advertising(void)
 			},
 	};
 
-	err = gapm_le_create_adv_legacy(0, GAPM_STATIC_ADDR, &adv_create_params, &le_adv_cbs);
+	err = gapm_le_create_adv_legacy(0, adv_type, &adv_create_params, &le_adv_cbs);
 	if (err) {
 		LOG_ERR("Error %u creating advertising activity", err);
 	}
@@ -559,7 +565,7 @@ static void server_configure(void)
 	struct glps_db_cfg glps_cfg = {0};
 
 	err = prf_add_profile(TASK_ID_GLPS, GAP_SEC1_NOAUTH_PAIR_ENC, 0, &glps_cfg, &glps_cb,
-				&start_hdl);
+			      &start_hdl);
 
 	if (err) {
 		LOG_ERR("Error %u adding profile", err);
@@ -572,6 +578,8 @@ void on_gapm_process_complete(uint32_t metainfo, uint16_t status)
 		LOG_ERR("gapm process completed with error %u", status);
 		return;
 	}
+
+	print_device_identity();
 
 	LOG_DBG("gapm process completed successfully");
 	k_sem_give(&init_sem);
@@ -608,12 +616,10 @@ prf_sfloat read_sensor_value(void)
 	/* Update the index to cycle through the values */
 	current_index = (current_index + 1) % num_values;
 
-
 	/* TODO save the last value in NVM */
 
 	return converted_value;
 }
-
 
 /*  Generate and send dummy data*/
 static void store_measurement(prf_sfloat current_value)
@@ -657,6 +663,11 @@ int main(void)
 
 	/* Start up bluetooth host stack */
 	alif_ble_enable(NULL);
+
+	if (address_verif(SAMPLE_ADDR_TYPE, &adv_type, &gapm_cfg)) {
+		LOG_ERR("Address verification failed");
+		return -EADV;
+	}
 
 	err = gapm_configure(0, &gapm_cfg, &gapm_cbs, on_gapm_process_complete);
 	if (err) {

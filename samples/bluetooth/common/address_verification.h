@@ -22,6 +22,22 @@ enum alif_addr_type {
 	/*Generated Public Address*/
 	ALIF_PUBLIC_ADDR,
 };
+/**
+ * @brief Verifies the address type and sets the appropriate GAPM configuration.
+ *
+ * @param addr_type Address type to be verified.
+ * @param adv_type Pointer to store the advertising type.
+ * @param gapm_cfg Pointer to the GAPM configuration structure.
+ *
+ * @return 0 on success, negative error code on failure.
+ */
 uint8_t address_verif(uint8_t addr_type, uint8_t *adv_type, gapm_config_t *gapm_cfg);
+/**
+ * @brief Prints the device identity address.
+ *
+ * This function retrieves the device identity address from the GAPM configuration
+ * and prints it to the log.
+ */
+void print_device_identity(void);
 
 #endif /* ALIF_ADDRESS_VERIFICATION_H_ */

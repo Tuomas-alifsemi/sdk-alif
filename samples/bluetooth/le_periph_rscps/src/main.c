@@ -23,6 +23,7 @@
 #include "gapm_le.h"
 #include "gapm_le_adv.h"
 #include "co_buf.h"
+#include "address_verification.h"
 
 /*  Profile definitions */
 #include "prf.h"
@@ -32,16 +33,19 @@
 #include "batt_svc.h"
 #include "shared_control.h"
 
-struct shared_control ctrl = { false, 0, 0 };
+struct shared_control ctrl = {false, 0, 0};
 
 #define RSCP_SENSOR_LOCATION_SUPPORT 0x01
-#define TX_INTERVAL		     1
+#define TX_INTERVAL      1
+#define SAMPLE_ADDR_TYPE ALIF_STATIC_RAND_ADDR /* Static random address */
+#define TX_INTERVAL 1
 
 /* Variable to check if peer device is ready to receive data"*/
 static bool ready_to_send;
 
 static uint32_t total_distance;
 static uint16_t current_value = 1;
+static uint8_t adv_type;
 
 K_SEM_DEFINE(init_sem, 0, 1);
 K_SEM_DEFINE(conn_sem, 0, 1);
@@ -51,14 +55,17 @@ LOG_MODULE_REGISTER(main, LOG_LEVEL_DBG);
 /**
  * Bluetooth stack configuration
  */
-static const gapm_config_t gapm_cfg = {
+static gapm_config_t gapm_cfg = {
 	.role = GAP_ROLE_LE_PERIPHERAL,
 	.pairing_mode = GAPM_PAIRING_DISABLE,
 	.privacy_cfg = 0,
 	.renew_dur = 1500,
 	/*      Dummy address   */
-	.private_identity.addr = {0xCC, 0xFE, 0xFB, 0xDE, 0x11, 0x07},
-	.irk.key = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+	.private_identity.addr = {0},
+	.irk.key = {0x12, 0xCE,
+	0xD2, 0x2F, 0x32, 0x5A,
+	0x61, 0x2A, 0x7E, 0x1A, 0x1B, 0x3B,
+	0x2A, 0x8D, 0xA1, 0xA4},
 	.gap_start_hdl = 0,
 	.gatt_start_hdl = 0,
 	.att_cfg = 0,
@@ -237,7 +244,7 @@ static const gapm_callbacks_t gapm_cbs = {
 	.p_bt_config_cbs = NULL, /* BT classic so not required */
 	.p_err_info_config_cbs = &gapm_err_cbs,
 };
-#endif /* !CONFIG_ALIF_BLE_ROM_IMAGE_V1_0 */
+#endif                              /* !CONFIG_ALIF_BLE_ROM_IMAGE_V1_0 */
 
 /*      profile callbacks */
 static const rscps_cb_t rscps_cb = {
@@ -391,7 +398,7 @@ static uint16_t create_advertising(void)
 			},
 	};
 
-	err = gapm_le_create_adv_legacy(0, GAPM_STATIC_ADDR, &adv_create_params, &le_adv_cbs);
+	err = gapm_le_create_adv_legacy(0, adv_type, &adv_create_params, &le_adv_cbs);
 	if (err) {
 		LOG_ERR("Error %u creating advertising activity", err);
 	}
@@ -425,6 +432,8 @@ void on_gapm_process_complete(uint32_t metainfo, uint16_t status)
 		LOG_ERR("gapm process completed with error %u", status);
 		return;
 	}
+
+	print_device_identity();
 
 	LOG_DBG("gapm process completed successfully");
 
@@ -488,6 +497,11 @@ int main(void)
 
 	/* Start up bluetooth host stack */
 	alif_ble_enable(NULL);
+
+	if (address_verif(SAMPLE_ADDR_TYPE, &adv_type, &gapm_cfg)) {
+		LOG_ERR("Address verification failed");
+		return -EADV;
+	}
 
 	err = gapm_configure(0, &gapm_cfg, &gapm_cbs, on_gapm_process_complete);
 	if (err) {

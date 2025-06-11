@@ -18,13 +18,16 @@
 #include "gapm_le.h"
 #include "gapm_le_adv.h"
 #include "gapm_le_per_sync.h"
+#include "address_verification.h"
 
 LOG_MODULE_REGISTER(main, LOG_LEVEL_DBG);
 
-#define DEVICE_NAME CONFIG_BLE_DEVICE_NAME
+#define DEVICE_NAME      CONFIG_BLE_DEVICE_NAME
+#define SAMPLE_ADDR_TYPE ALIF_STATIC_RAND_ADDR /* Static random address */
 
 static uint8_t adv_actv_idx;
 static uint8_t sync_actv_idx;
+static uint8_t adv_type;
 
 static uint16_t utils_start_per_adv_sync(uint8_t conidx)
 {
@@ -272,7 +275,7 @@ static uint16_t utils_create_adv(void)
 		.created = on_adv_created,
 	};
 
-	return gapm_le_create_adv_legacy(0, GAPM_STATIC_ADDR, &adv_create_params, &le_adv_cbs);
+	return gapm_le_create_adv_legacy(0, adv_type, &adv_create_params, &le_adv_cbs);
 }
 
 static void on_per_adv_proc_cmp(uint32_t metainfo, uint8_t proc_id, uint8_t actv_idx,
@@ -381,6 +384,14 @@ static void on_gapm_process_complete(uint32_t metainfo, uint16_t status)
 		return;
 	}
 
+	gap_bdaddr_t identity;
+
+	gapm_get_identity(&identity);
+
+	LOG_INF("Device identity: %02X:%02X:%02X:%02X:%02X:%02X", identity.addr[5],
+		identity.addr[4], identity.addr[3], identity.addr[2], identity.addr[1],
+		identity.addr[0]);
+
 	LOG_INF("Setting device name: %s", DEVICE_NAME);
 	rc = gapm_set_name(0, strlen(DEVICE_NAME), DEVICE_NAME, on_gapm_name_proc_cmp_cb);
 	if (rc != GAP_ERR_NO_ERROR) {
@@ -391,7 +402,7 @@ static void on_gapm_process_complete(uint32_t metainfo, uint16_t status)
 
 static uint16_t utils_config_gapm(void)
 {
-	static const gapm_config_t gapm_cfg = {
+	static gapm_config_t gapm_cfg = {
 		/* Observer role is needed for periodic sync */
 		.role = GAP_ROLE_LE_PERIPHERAL | GAP_ROLE_LE_OBSERVER,
 		.pairing_mode = GAPM_PAIRING_DISABLE,
@@ -475,6 +486,11 @@ static void on_ble_enabled(void)
 int main(void)
 {
 	int rc;
+
+	if (address_verif(SAMPLE_ADDR_TYPE, &adv_type, &gapm_cfg)) {
+		LOG_ERR("Address verification failed");
+		return -EADV;
+	}
 
 	LOG_INF("Enabling Alif BLE stack");
 	rc = alif_ble_enable(on_ble_enabled);

@@ -7,7 +7,6 @@
  * contact@alifsemi.com, or visit: https://alifsemi.com/license
  */
 
-
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/random/random.h>
@@ -28,7 +27,7 @@ uint8_t address_verif(uint8_t addr_type, uint8_t *adv_type, gapm_config_t *gapm_
 		gapm_cfg->privacy_cfg = GAPM_PRIV_CFG_PRIV_ADDR_BIT; /*Privacy address bit*/
 		sys_rand_get(gapm_cfg->private_identity.addr, GAP_BD_ADDR_LEN);
 		gapm_cfg->private_identity.addr[5] |= 0xC0; /*MSB position*/
-		*adv_type = GAPM_STATIC_ADDR; /*Static random address*/
+		*adv_type = GAPM_STATIC_ADDR;               /*Static random address*/
 		break;
 	case ALIF_PUBLIC_ADDR:
 		gapm_cfg->privacy_cfg = 0;
@@ -37,7 +36,7 @@ uint8_t address_verif(uint8_t addr_type, uint8_t *adv_type, gapm_config_t *gapm_
 		break;
 	case ALIF_GEN_RSLV_RAND_ADDR:
 		gapm_cfg->privacy_cfg = GAPM_PRIV_CFG_PRIV_ADDR_BIT; /*Privacy address bit*/
-		*adv_type = GAPM_GEN_RSLV_ADDR; /*Resolvable random address*/
+		*adv_type = GAPM_GEN_RSLV_ADDR;                      /*Resolvable random address*/
 		gapm_cfg->privacy_cfg = GAPM_PRIV_CFG_PRIV_ADDR_BIT; /*Privacy address bit*/
 		sys_rand_get(gapm_cfg->private_identity.addr, GAP_BD_ADDR_LEN);
 		gapm_cfg->private_identity.addr[5] |= 0xC0; /*MSB position*/
@@ -54,4 +53,19 @@ uint8_t address_verif(uint8_t addr_type, uint8_t *adv_type, gapm_config_t *gapm_
 		return -EINVAL;
 	}
 	return 0;
+}
+
+void print_device_identity(void)
+{
+	uint16_t error;
+	gap_bdaddr_t identity;
+
+	error = gapm_get_identity(&identity);
+	if (error) {
+		LOG_ERR("Failed to get identity, error: %u", error);
+		return;
+	}
+	LOG_INF("Device Identity Address: %02X:%02X:%02X:%02X:%02X:%02X", identity.addr[5],
+		identity.addr[4], identity.addr[3], identity.addr[2], identity.addr[1],
+		identity.addr[0]);
 }

@@ -25,44 +25,34 @@
 #include "gatt_db.h"
 #include "gatt_srv.h"
 #include "ke_mem.h"
+#include "address_verification.h"
 
 static uint8_t hello_arr[] = "HelloHello";
 static uint8_t hello_arr_index;
 
-#define BT_CONN_STATE_CONNECTED	   0x00
+#define BT_CONN_STATE_CONNECTED    0x00
 #define BT_CONN_STATE_DISCONNECTED 0x01
 /* Service Definitions */
-#define ATT_128_PRIMARY_SERVICE  ATT_16_TO_128_ARRAY(GATT_DECL_PRIMARY_SERVICE)
-#define ATT_128_INCLUDED_SERVICE ATT_16_TO_128_ARRAY(GATT_DECL_INCLUDE)
-#define ATT_128_CHARACTERISTIC   ATT_16_TO_128_ARRAY(GATT_DECL_CHARACTERISTIC)
-#define ATT_128_CLIENT_CHAR_CFG  ATT_16_TO_128_ARRAY(GATT_DESC_CLIENT_CHAR_CFG)
+#define ATT_128_PRIMARY_SERVICE    ATT_16_TO_128_ARRAY(GATT_DECL_PRIMARY_SERVICE)
+#define ATT_128_INCLUDED_SERVICE   ATT_16_TO_128_ARRAY(GATT_DECL_INCLUDE)
+#define ATT_128_CHARACTERISTIC     ATT_16_TO_128_ARRAY(GATT_DECL_CHARACTERISTIC)
+#define ATT_128_CLIENT_CHAR_CFG    ATT_16_TO_128_ARRAY(GATT_DESC_CLIENT_CHAR_CFG)
 /* HELLO SERVICE and attribute 128 bit UUIDs */
-#define HELLO_UUID_128_SVC                                                                           \
-	{                                                                                          \
-		0x12, 0x34, 0x56, 0x78, 0x90, 0x12, 0x23, 0x34, 0x45, 0x56, 0x67, 0x78, 0x89,      \
-			0x90, 0x00, 0x00                                                           \
-	}
-#define HELLO_UUID_128_CHAR0                                                                         \
-	{                                                                                          \
-		0x12, 0x34, 0x56, 0x78, 0x90, 0x12, 0x23, 0x34, 0x45, 0x56, 0x67, 0x78, 0x89,      \
-			0x15, 0x00, 0x00                                                           \
-	}
-#define HELLO_UUID_128_CHAR1                                                                         \
-	{                                                                                          \
-		0x12, 0x34, 0x56, 0x78, 0x90, 0x12, 0x23, 0x34, 0x45, 0x56, 0x67, 0x78, 0x89,     \
-			0x16, 0x00, 0x00                                                           \
-	}
+#define HELLO_UUID_128_SVC                                                                         \
+	{0x12, 0x34, 0x56, 0x78, 0x90, 0x12, 0x23, 0x34,                                           \
+	 0x45, 0x56, 0x67, 0x78, 0x89, 0x90, 0x00, 0x00}
+#define HELLO_UUID_128_CHAR0                                                                       \
+	{0x12, 0x34, 0x56, 0x78, 0x90, 0x12, 0x23, 0x34,                                           \
+	 0x45, 0x56, 0x67, 0x78, 0x89, 0x15, 0x00, 0x00}
+#define HELLO_UUID_128_CHAR1                                                                       \
+	{0x12, 0x34, 0x56, 0x78, 0x90, 0x12, 0x23, 0x34,                                           \
+	 0x45, 0x56, 0x67, 0x78, 0x89, 0x16, 0x00, 0x00}
 #define HELLO_METAINFO_CHAR0_NTF_SEND 0x4321
 #define ATT_16_TO_128_ARRAY(uuid)                                                                  \
-	{                                                                                          \
-		(uuid) & 0xFF, (uuid >> 8) & 0xFF, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0        \
-	}
+	{(uuid) & 0xFF, (uuid >> 8) & 0xFF, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
 
 /* gatt service identifier for advertising */
-static uint16_t gatt_svc_id[8] = {
-	0x3412, 0x7856, 0x1290, 0x3423,
-	0x5645, 0x7867, 0x9089, 0x0000
-};
+static uint16_t gatt_svc_id[8] = {0x3412, 0x7856, 0x1290, 0x3423, 0x5645, 0x7867, 0x9089, 0x0000};
 
 /* List of attributes in the service */
 enum service_att_list {
@@ -81,9 +71,11 @@ enum service_att_list {
 static uint8_t conn_status = BT_CONN_STATE_DISCONNECTED;
 static uint8_t adv_actv_idx;
 static struct service_env env;
+static uint8_t adv_type;
 
 /* Load name from configuration file */
-#define DEVICE_NAME CONFIG_BLE_DEVICE_NAME
+#define DEVICE_NAME      CONFIG_BLE_DEVICE_NAME
+#define SAMPLE_ADDR_TYPE ALIF_STATIC_RAND_ADDR /* Static random address */
 static const char device_name[] = DEVICE_NAME;
 
 /* Service UUID to pass into gatt_db_svc_add */
@@ -95,22 +87,24 @@ static const gatt_att_desc_t hello_att_db[HELLO_IDX_NB] = {
 
 	[HELLO_IDX_CHAR0_CHAR] = {ATT_128_CHARACTERISTIC, ATT_UUID(16) | PROP(RD), 0},
 	[HELLO_IDX_CHAR0_VAL] = {HELLO_UUID_128_CHAR0, ATT_UUID(128) | PROP(RD) | PROP(N),
-			      OPT(NO_OFFSET)},
-	[HELLO_IDX_CHAR0_NTF_CFG] = {ATT_128_CLIENT_CHAR_CFG, ATT_UUID(16) | PROP(RD) | PROP(WR), 0},
+				 OPT(NO_OFFSET)},
+	[HELLO_IDX_CHAR0_NTF_CFG] = {ATT_128_CLIENT_CHAR_CFG, ATT_UUID(16) | PROP(RD) | PROP(WR),
+				     0},
 
 	[HELLO_IDX_CHAR1_CHAR] = {ATT_128_CHARACTERISTIC, ATT_UUID(16) | PROP(RD), 0},
 	[HELLO_IDX_CHAR1_VAL] = {HELLO_UUID_128_CHAR1, ATT_UUID(128) | PROP(WR),
-			      OPT(NO_OFFSET) | sizeof(uint16_t)},
+				 OPT(NO_OFFSET) | sizeof(uint16_t)},
 };
 
 /* Bluetooth stack configuration*/
-static const gapm_config_t gapm_cfg = {
+static gapm_config_t gapm_cfg = {
 	.role = GAP_ROLE_LE_PERIPHERAL,
 	.pairing_mode = GAPM_PAIRING_DISABLE,
 	.privacy_cfg = 0,
 	.renew_dur = 1500,
-	.private_identity.addr = {0xCF, 0xFE, 0xFB, 0xDE, 0x11, 0x07},
-	.irk.key = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+	.private_identity.addr = {0},
+	.irk.key = {0x12, 0xCE, 0xD2, 0x2F, 0x32, 0x5A, 0x61, 0x2A, 0x7E, 0x1A, 0x1B, 0x3B, 0x2A,
+		    0x8D, 0xA1, 0xA4},
 	.gap_start_hdl = 0,
 	.gatt_start_hdl = 0,
 	.att_cfg = 0,
@@ -343,6 +337,8 @@ static void on_adv_actv_stopped(uint32_t metainfo, uint8_t actv_idx, uint16_t re
 static void on_adv_actv_proc_cmp(uint32_t metainfo, uint8_t proc_id, uint8_t actv_idx,
 				 uint16_t status)
 {
+	gap_addr_t *p_addr;
+
 	if (status) {
 		LOG_ERR("Advertising activity process completed with error %u", status);
 		return;
@@ -366,7 +362,10 @@ static void on_adv_actv_proc_cmp(uint32_t metainfo, uint8_t proc_id, uint8_t act
 		break;
 
 	case GAPM_ACTV_START:
-		LOG_DBG("Advertising was started");
+		p_addr = gapm_le_get_adv_addr(actv_idx);
+		LOG_INF("Advertising has been started, address: %02X:%02X:%02X:%02X:%02X:%02X",
+			p_addr->addr[5], p_addr->addr[4], p_addr->addr[3], p_addr->addr[2],
+			p_addr->addr[1], p_addr->addr[0]);
 		k_sem_give(&init_sem);
 		break;
 
@@ -401,14 +400,14 @@ static uint16_t create_advertising(void)
 #endif /* !CONFIG_ALIF_BLE_ROM_IMAGE_V1_0 */
 		.filter_pol = GAPM_ADV_ALLOW_SCAN_ANY_CON_ANY,
 		.prim_cfg = {
-			.adv_intv_min = 160,
-			.adv_intv_max = 800,
-			.ch_map = ADV_ALL_CHNLS_EN,
-			.phy = GAPM_PHY_TYPE_LE_1M,
-		},
+				.adv_intv_min = 160,
+				.adv_intv_max = 800,
+				.ch_map = ADV_ALL_CHNLS_EN,
+				.phy = GAPM_PHY_TYPE_LE_1M,
+			},
 	};
 
-	err = gapm_le_create_adv_legacy(0, GAPM_STATIC_ADDR, &adv_create_params, &le_adv_cbs);
+	err = gapm_le_create_adv_legacy(0, adv_type, &adv_create_params, &le_adv_cbs);
 	if (err) {
 		LOG_ERR("Error %u creating advertising activity", err);
 	}
@@ -436,6 +435,8 @@ void on_gapm_process_complete(uint32_t metainfo, uint16_t status)
 	}
 
 	server_configure();
+
+	print_device_identity();
 
 	LOG_DBG("gapm process completed successfully");
 
@@ -467,8 +468,8 @@ static void on_att_read_get(uint8_t conidx, uint8_t user_lid, uint16_t token, ui
 			if (CONFIG_HELLO_STRING_LENGTH % 5) {
 				loop_count += 1;
 			}
-			for (int i=0; i < loop_count; i++) {
-				memcpy(env.char0_val + i*5, &hello_arr[hello_arr_index], 5);
+			for (int i = 0; i < loop_count; i++) {
+				memcpy(env.char0_val + i * 5, &hello_arr[hello_arr_index], 5);
 			}
 			att_val = env.char0_val;
 			LOG_DBG("read hello text");
@@ -525,8 +526,7 @@ static void on_att_val_set(uint8_t conidx, uint8_t user_lid, uint16_t token, uin
 				LOG_DBG("Incorrect buffer size");
 				status = ATT_ERR_INVALID_ATTRIBUTE_VAL_LEN;
 			} else {
-				memcpy(&env.char1_val, co_buf_data(p_data),
-				       sizeof(env.char1_val));
+				memcpy(&env.char1_val, co_buf_data(p_data), sizeof(env.char1_val));
 				LOG_DBG("TOGGLE LED, state %d", env.char1_val);
 			}
 			break;
@@ -589,14 +589,8 @@ static uint16_t service_init(void)
 	}
 
 	/* Add the GATT service */
-	status = gatt_db_svc_add(env.user_lid,
-					SVC_UUID(128),
-					hello_service_uuid,
-					HELLO_IDX_NB,
-					NULL,
-					hello_att_db,
-					HELLO_IDX_NB,
-					&env.start_hdl);
+	status = gatt_db_svc_add(env.user_lid, SVC_UUID(128), hello_service_uuid, HELLO_IDX_NB,
+				 NULL, hello_att_db, HELLO_IDX_NB, &env.start_hdl);
 	if (status != GAP_ERR_NO_ERROR) {
 		gatt_user_unregister(env.user_lid);
 		return status;
@@ -632,8 +626,8 @@ static uint16_t service_notification_send(uint32_t conidx_mask)
 	if (CONFIG_HELLO_STRING_LENGTH % 5) {
 		loop_count += 1;
 	}
-	for (int i=0; i < loop_count; i++) {
-		memcpy(env.char0_val + i*5, &hello_arr[hello_arr_index], 5);
+	for (int i = 0; i < loop_count; i++) {
+		memcpy(env.char0_val + i * 5, &hello_arr[hello_arr_index], 5);
 	}
 
 	memcpy(co_buf_data(p_buf), env.char0_val, CONFIG_HELLO_STRING_LENGTH);
@@ -643,7 +637,7 @@ static uint16_t service_notification_send(uint32_t conidx_mask)
 	}
 
 	status = gatt_srv_event_send(conidx, env.user_lid, HELLO_METAINFO_CHAR0_NTF_SEND,
-					 GATT_NOTIFY, env.start_hdl + HELLO_IDX_CHAR0_VAL, p_buf);
+				     GATT_NOTIFY, env.start_hdl + HELLO_IDX_CHAR0_VAL, p_buf);
 
 	co_buf_release(p_buf);
 
@@ -662,6 +656,11 @@ int main(void)
 	/* Start up bluetooth host stack */
 	alif_ble_enable(NULL);
 
+	if (address_verif(SAMPLE_ADDR_TYPE, &adv_type, &gapm_cfg)) {
+		LOG_ERR("Address verification failed");
+		return -EADV;
+	}
+
 	err = gapm_configure(0, &gapm_cfg, &gapm_cbs, on_gapm_process_complete);
 	if (err) {
 		LOG_ERR("gapm_configure error %u", err);
@@ -676,9 +675,8 @@ int main(void)
 	while (1) {
 		k_sleep(K_SECONDS(1));
 
-		if ((conn_status == BT_CONN_STATE_CONNECTED)
-		&& (env.ntf_cfg == PRF_CLI_START_NTF)
-		&& (!env.ntf_ongoing)) {
+		if ((conn_status == BT_CONN_STATE_CONNECTED) &&
+		    (env.ntf_cfg == PRF_CLI_START_NTF) && (!env.ntf_ongoing)) {
 			err = service_notification_send(UINT32_MAX);
 			if (err) {
 				LOG_ERR("Error %u sending Hello", err);

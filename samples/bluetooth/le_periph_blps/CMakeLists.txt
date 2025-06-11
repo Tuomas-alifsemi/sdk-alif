@@ -15,6 +15,7 @@ target_include_directories(app PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/inc)
 zephyr_include_directories(../common)
 
 target_sources(app PRIVATE
-    src/main.c
-    ../common/batt_svc.c
+	src/main.c
+	../common/batt_svc.c
+	../common/address_verification.c
 )

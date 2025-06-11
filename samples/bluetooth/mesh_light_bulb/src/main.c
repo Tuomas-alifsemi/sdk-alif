@@ -17,17 +17,21 @@
 #include "gapc_sec.h"
 #include "gap_le.h"
 #include "mesh_node.h"
+#include "address_verification.h"
 
 LOG_MODULE_REGISTER(main, LOG_LEVEL_DBG);
 /* Print the function names that are not implemented */
 #define EMPTY_FUNC() LOG_DBG("Not Implemented")
+#define SAMPLE_ADDR_TYPE ALIF_STATIC_RAND_ADDR /* Static random address */
+
+static uint8_t adv_type;
 
 /**
  * Bluetooth stack configuration
  */
 
 /* GAP manager configuration */
-static const gapm_config_t gapm_cfg = {
+static gapm_config_t gapm_cfg = {
 	.role = GAP_ROLE_LE_OBSERVER | GAP_ROLE_LE_BROADCASTER,
 	.pairing_mode = GAPM_PAIRING_DISABLE,
 	.privacy_cfg = 0,
@@ -72,6 +76,14 @@ static void on_gapm_process_complete(uint32_t metainfo, uint16_t status)
 		return;
 	}
 
+	gap_bdaddr_t identity;
+
+	gapm_get_identity(&identity);
+
+	LOG_INF("Device identity: %02X:%02X:%02X:%02X:%02X:%02X",
+		identity.addr[5], identity.addr[4],
+		identity.addr[3], identity.addr[2], identity.addr[1], identity.addr[0]);
+
 	LOG_DBG("gapm process completed successfully");
 
 	/* Configure mesh node */
@@ -84,6 +96,11 @@ int main(void)
 {
 	/* Start up bluetooth host stack */
 	alif_ble_enable(NULL);
+
+	if (address_verif(SAMPLE_ADDR_TYPE, &adv_type, &gapm_cfg)) {
+		LOG_ERR("Address verification failed");
+		return -EADV;
+	}
 
 	/* After gapm_configure returns successfully, all other operations will be started from
 	 * callbacks

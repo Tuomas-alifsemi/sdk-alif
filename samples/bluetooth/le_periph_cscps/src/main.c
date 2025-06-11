@@ -22,6 +22,7 @@
 #include "gapm_le.h"
 #include "gapm_le_adv.h"
 #include "co_buf.h"
+#include "address_verification.h"
 
 /*  Profile definitions */
 #include "prf.h"
@@ -30,14 +31,16 @@
 #include "batt_svc.h"
 #include "shared_control.h"
 
-struct shared_control ctrl = { false, 0, 0 };
+struct shared_control ctrl = {false, 0, 0};
 
 #define CSCP_SENSOR_LOCATION_SUPPORT 0x01
+#define SAMPLE_ADDR_TYPE             ALIF_STATIC_RAND_ADDR /* Static random address */
 
 /* Variable to check if peer device is ready to receive data"*/
 static bool ready_to_send;
 
 static uint16_t evt_time;
+static uint8_t adv_type;
 
 K_SEM_DEFINE(init_sem, 0, 1);
 K_SEM_DEFINE(conn_sem, 0, 1);
@@ -46,26 +49,25 @@ LOG_MODULE_REGISTER(main, LOG_LEVEL_DBG);
 
 static uint16_t current_value;
 static cscp_csc_meas_t p_meas = {
-	.flags = CSCP_MEAS_WHEEL_REV_DATA_PRESENT_BIT |
-		CSCP_MEAS_CRANK_REV_DATA_PRESENT_BIT,
+	.flags = CSCP_MEAS_WHEEL_REV_DATA_PRESENT_BIT | CSCP_MEAS_CRANK_REV_DATA_PRESENT_BIT,
 };
 
 /* Dummy fixed incremental values */
-#define WHEEL_REVS_PER_UPDATE	6	/* e.g. 3 rev/s × 2 s */
-#define CRANK_REVS_PER_UPDATE	3	/* e.g. 90 rpm → 1.5 rev/s × 2 s ≈ 3 rev */
-#define EVENT_TIME_INC_UNITS	2000	/* e.g. 2 secs */
+#define WHEEL_REVS_PER_UPDATE 6    /* e.g. 3 rev/s × 2 s */
+#define CRANK_REVS_PER_UPDATE 3    /* e.g. 90 rpm → 1.5 rev/s × 2 s ≈ 3 rev */
+#define EVENT_TIME_INC_UNITS  2000 /* e.g. 2 secs */
 
 /**
  * Bluetooth stack configuration
  */
-static const gapm_config_t gapm_cfg = {
+static gapm_config_t gapm_cfg = {
 	.role = GAP_ROLE_LE_PERIPHERAL,
 	.pairing_mode = GAPM_PAIRING_DISABLE,
 	.privacy_cfg = 0,
 	.renew_dur = 1500,
-	/*      Dummy address   */
-	.private_identity.addr = {0xCB, 0xFE, 0xFB, 0xDE, 0x11, 0x07},
-	.irk.key = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+	.private_identity.addr = {0},
+	.irk.key = {0x12, 0xCE, 0xD2, 0x2F, 0x32, 0x5A, 0x61, 0x2A, 0x7E, 0x1A, 0x1B, 0x3B, 0x2A,
+		    0x8D, 0xA1, 0xA4},
 	.gap_start_hdl = 0,
 	.gatt_start_hdl = 0,
 	.att_cfg = 0,
@@ -332,6 +334,8 @@ static void on_adv_actv_stopped(uint32_t metainfo, uint8_t actv_idx, uint16_t re
 static void on_adv_actv_proc_cmp(uint32_t metainfo, uint8_t proc_id, uint8_t actv_idx,
 				 uint16_t status)
 {
+	gap_addr_t *p_addr;
+
 	if (status) {
 		LOG_ERR("Advertising activity process completed with error %u", status);
 		return;
@@ -355,7 +359,11 @@ static void on_adv_actv_proc_cmp(uint32_t metainfo, uint8_t proc_id, uint8_t act
 		break;
 
 	case GAPM_ACTV_START:
-		LOG_DBG("Advertising was started");
+		p_addr = gapm_le_get_adv_addr(actv_idx);
+		LOG_INF("Advertising has been started, address: %02X:%02X:%02X:%02X:%02X:%02X",
+			p_addr->addr[5], p_addr->addr[4], p_addr->addr[3], p_addr->addr[2],
+			p_addr->addr[1], p_addr->addr[0]);
+		k_sem_give(&init_sem);
 		break;
 
 	default:
@@ -389,14 +397,14 @@ static uint16_t create_advertising(void)
 #endif /* !CONFIG_ALIF_BLE_ROM_IMAGE_V1_0 */
 		.filter_pol = GAPM_ADV_ALLOW_SCAN_ANY_CON_ANY,
 		.prim_cfg = {
-			.adv_intv_min = 160, /* 100 ms */
-			.adv_intv_max = 800, /* 500 ms */
-			.ch_map = ADV_ALL_CHNLS_EN,
-			.phy = GAPM_PHY_TYPE_LE_1M,
-		},
+				.adv_intv_min = 160, /* 100 ms */
+				.adv_intv_max = 800, /* 500 ms */
+				.ch_map = ADV_ALL_CHNLS_EN,
+				.phy = GAPM_PHY_TYPE_LE_1M,
+			},
 	};
 
-	err = gapm_le_create_adv_legacy(0, GAPM_STATIC_ADDR, &adv_create_params, &le_adv_cbs);
+	err = gapm_le_create_adv_legacy(0, adv_type, &adv_create_params, &le_adv_cbs);
 	if (err) {
 		LOG_ERR("Error %u creating advertising activity", err);
 	}
@@ -428,6 +436,8 @@ void on_gapm_process_complete(uint32_t metainfo, uint16_t status)
 		LOG_ERR("gapm process completed with error %u", status);
 		return;
 	}
+
+	print_device_identity();
 
 	LOG_DBG("gapm process completed successfully");
 
@@ -487,6 +497,11 @@ int main(void)
 
 	/* Start up bluetooth host stack */
 	alif_ble_enable(NULL);
+
+	if (address_verif(SAMPLE_ADDR_TYPE, &adv_type, &gapm_cfg)) {
+		LOG_ERR("Address verification failed");
+		return -EADV;
+	}
 
 	err = gapm_configure(0, &gapm_cfg, &gapm_cbs, on_gapm_process_complete);
 	if (err) {

@@ -20,4 +20,5 @@ target_sources(app PRIVATE
     src/main.c
     src/rtc_emulator.c
     ../common/batt_svc.c
+	../common/address_verification.c
 )

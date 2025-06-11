@@ -22,6 +22,7 @@
 #include "gapm_le.h"
 #include "gapm_le_adv.h"
 #include "co_buf.h"
+#include "address_verification.h"
 
 /*  Profile definitions */
 #include "prf.h"
@@ -29,11 +30,14 @@
 #include "cpps_msg.h"
 #include "cpp_common.h"
 
-#define BT_CONN_STATE_CONNECTED	     0x00
-#define BT_CONN_STATE_DISCONNECTED   0x01
-#define TX_INTERVAL		     2
+#define BT_CONN_STATE_CONNECTED    0x00
+#define BT_CONN_STATE_DISCONNECTED 0x01
+#define TX_INTERVAL                2
+#define SAMPLE_ADDR_TYPE           ALIF_STATIC_RAND_ADDR /* Static random address */
 
+static uint8_t adv_type;
 static uint8_t conn_status = BT_CONN_STATE_DISCONNECTED;
+static uint8_t adv_type; /* Advertising type, set by address_verif() */
 
 /* Variable to check if peer device is ready to receive data"*/
 static bool READY_TO_SEND;
@@ -48,7 +52,7 @@ static uint16_t current_value;
 /**
  * Bluetooth stack configuration
  */
-static const gapm_config_t gapm_cfg = {
+static gapm_config_t gapm_cfg = {
 	.role = GAP_ROLE_LE_PERIPHERAL,
 	.pairing_mode = GAPM_PAIRING_DISABLE,
 	.privacy_cfg = 0,
@@ -324,6 +328,8 @@ static void on_adv_actv_stopped(uint32_t metainfo, uint8_t actv_idx, uint16_t re
 static void on_adv_actv_proc_cmp(uint32_t metainfo, uint8_t proc_id, uint8_t actv_idx,
 				 uint16_t status)
 {
+	gap_addr_t *p_addr;
+
 	if (status) {
 		LOG_ERR("Advertising activity process completed with error %u", status);
 		return;
@@ -347,7 +353,11 @@ static void on_adv_actv_proc_cmp(uint32_t metainfo, uint8_t proc_id, uint8_t act
 		break;
 
 	case GAPM_ACTV_START:
-		LOG_DBG("Advertising was started");
+		p_addr = gapm_le_get_adv_addr(actv_idx);
+		LOG_INF("Advertising has been started, address: %02X:%02X:%02X:%02X:%02X:%02X",
+			p_addr->addr[5], p_addr->addr[4], p_addr->addr[3], p_addr->addr[2],
+			p_addr->addr[1], p_addr->addr[0]);
+		k_sem_give(&init_sem);
 		break;
 
 	default:
@@ -381,14 +391,14 @@ static uint16_t create_advertising(void)
 #endif /* !CONFIG_ALIF_BLE_ROM_IMAGE_V1_0 */
 		.filter_pol = GAPM_ADV_ALLOW_SCAN_ANY_CON_ANY,
 		.prim_cfg = {
-			.adv_intv_min = 160, /* 100 ms */
-			.adv_intv_max = 800, /* 500 ms */
-			.ch_map = ADV_ALL_CHNLS_EN,
-			.phy = GAPM_PHY_TYPE_LE_1M,
-		},
+				.adv_intv_min = 160, /* 100 ms */
+				.adv_intv_max = 800, /* 500 ms */
+				.ch_map = ADV_ALL_CHNLS_EN,
+				.phy = GAPM_PHY_TYPE_LE_1M,
+			},
 	};
 
-	err = gapm_le_create_adv_legacy(0, GAPM_STATIC_ADDR, &adv_create_params, &le_adv_cbs);
+	err = gapm_le_create_adv_legacy(0, adv_type, &adv_create_params, &le_adv_cbs);
 	if (err) {
 		LOG_ERR("Error %u creating advertising activity", err);
 	}
@@ -421,6 +431,8 @@ void on_gapm_process_complete(uint32_t metainfo, uint16_t status)
 		LOG_ERR("gapm process completed with error %u", status);
 		return;
 	}
+
+	print_device_identity();
 
 	LOG_DBG("gapm process completed successfully");
 
@@ -484,6 +496,11 @@ int main(void)
 
 	/* Start up bluetooth host stack */
 	alif_ble_enable(NULL);
+
+	if (address_verif(SAMPLE_ADDR_TYPE, &adv_type, &gapm_cfg)) {
+		LOG_ERR("Address verification failed");
+		return -EADV;
+	}
 
 	err = gapm_configure(0, &gapm_cfg, &gapm_cbs, on_gapm_process_complete);
 	if (err) {
